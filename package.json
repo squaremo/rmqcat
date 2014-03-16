@@ -4,7 +4,8 @@
   "description": "cat-like tool for sending data through RabbitMQ",
   "main": "index.js",
   "dependencies": {
-    "amqplib": "0.1"
+    "amqplib": "0.1",
+    "yargs": ""
   },
   "devDependencies": {},
   "scripts": {

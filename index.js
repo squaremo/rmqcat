@@ -6,13 +6,30 @@ var Writable = require('stream').Writable
 var EventEmitter = require('events').EventEmitter;
 var inherits = require('util').inherits;
 
-var argv = require('yargs')
-  .default('url', 'amqp://localhost')
-  .default('queue', 'rmqcat')
-  .boolean('l')
-  .boolean('k')
-  .boolean('D')
-  .argv;
+var options = require('yargs')
+  .example('$0 < foobar.txt', 'Send a file')
+  .example('$0 -lk', 'Listen for connections and output data to stdout')
+
+  .options('url', {
+    'default': 'amqp://localhost',
+    describe:'Connect to the RabbitMQ at <url>'})
+  .options('queue', {
+    'default': 'rmqcat',
+    describe: 'Use the service at <queue>'})
+  .options('help', {
+    describe: 'Print help'})
+
+  .describe('l', 'Listen for connections')
+  .describe('k', 'Keep listening after client disconnections')
+  .describe('D', 'Output debug information to stderr')
+  .boolean(['l', 'k', 'D']);
+
+var argv = options.argv;
+
+if (argv.help) {
+  options.showHelp();
+  process.exit(0);
+}
 
 var debug = (argv.D) ? console.warn : function() {};
 

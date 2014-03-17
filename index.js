@@ -61,6 +61,7 @@ ok.then(function(connection) {
         // all connection requests at once.
         connection.createChannel().then(function(acceptCh) {
           var accepted = null;
+          var current = null;
           acceptCh.prefetch(1);
           acceptCh.consume(handshakeQ, function(msg) {
             switch (msg.properties.type) {
@@ -71,8 +72,10 @@ ok.then(function(connection) {
               acceptCh.sendToQueue(stdoutQ, new Buffer(0),
                                    {type: 'open', replyTo: stdinQ});
               debug('Sent open to %s: stdin is %s', stdoutQ, stdinQ);
-              // %%% ropey; I need to be able to redirect stdin
-              relayStdin(ch, stdoutQ);
+
+              current = writableQueue(ch, stdoutQ);
+              process.stdin.unpipe();
+              process.stdin.pipe(current, {end: true});
               break;
             default:
               console.warn('Something other than open, %s ',
@@ -93,7 +96,7 @@ ok.then(function(connection) {
       });
     }
 
-    else { // client
+    else { // act as client
       ch.assertQueue('', {exclusive: true}).then(function(ok) {
         var stdoutQ = ok.queue;
         debug('Created stdout queue %s', stdoutQ);
@@ -103,10 +106,10 @@ ok.then(function(connection) {
           case 'open':
             var stdinQ = msg.properties.replyTo;
             debug('Recv open: stdin is %s', stdinQ);
-            relayStdin(ch, stdinQ);
-            process.stdin.on('end', function() {
-              ch.close();
-            });
+            var relay = writableQueue(ch, stdinQ);
+            process.stdin.pipe(relay, {end: true});
+            process.stdin.on(
+              'end', setImmediate.bind(null, ch.close.bind(ch)));
             break;
           case 'data':
             debug('Recv %d bytes on stdout', msg.content.length);
@@ -132,22 +135,20 @@ ok.then(function(connection) {
   });
 }, console.warn);
 
-function relayStdin(channel, queue) {
-  relay(process.stdin, channel, queue);
-  process.stdin.on('end', function() {
-    channel.sendToQueue(queue, new Buffer(0), {'type': 'eof'});
+function writableQueue(channel, queue) {
+  var writable = new Writable();
+  writable._write = function(chunk, _enc, cb) {
+    debug('Sent %d bytes to %s', chunk.length, queue);
+    if (channel.sendToQueue(queue, chunk, {type: 'data'})) {
+      cb();
+    }
+    else channel.once('drain', cb);
+  };
+  writable.on('finish', function() {
+    channel.sendToQueue(queue, new Buffer(0), {type: 'eof'});
     debug('Sent eof to %s', queue);
   });
-}
-
-function relay(stream, channel, queue) {
-  function go() {
-    var b; while (b = stream.read()) {
-      channel.sendToQueue(queue, b, {'type': 'data'});
-      debug('Sent %d bytes to %s', b.length, queue);
-    }
-  }
-  stream.on('readable', go);
+  return writable;
 }
 
 function QueueStreamServer(channel, queue) {

@@ -10,9 +10,11 @@ var argv = require('yargs')
   .default('url', 'amqp://localhost')
   .default('queue', 'rmqcat')
   .boolean('l')
+  .boolean('k')
+  .boolean('D')
   .argv;
 
-var debug = (process.env.DEBUG) ? console.warn : function() {};
+var debug = (argv.D) ? console.warn : function() {};
 
 var url = argv.url;
 

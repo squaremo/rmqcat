@@ -92,8 +92,9 @@ ok.then(function(connection) {
           // being routed; this is interpreted as the connection
           // having disappeared (possibly before we even turned up)
           acceptCh.on('return', function(returned) {
-            debug('Open message returned form %s',
-                  returned.fields.routingKey);
+            debug('open message returned from %s',
+                  returned.fields.routingKey,
+                  ' assuming dead connection');
             next();
           });
 

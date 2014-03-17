@@ -73,8 +73,8 @@ ok.then(function(connection) {
                                    {type: 'open', replyTo: stdinQ});
               debug('Sent open to %s: stdin is %s', stdoutQ, stdinQ);
 
-              current = writableQueue(ch, stdoutQ);
               process.stdin.unpipe();
+              current = writableQueue(ch, stdoutQ);
               process.stdin.pipe(current, {end: true});
               break;
             default:
@@ -88,8 +88,11 @@ ok.then(function(connection) {
           streams.on('connection', function(stream) {
             stream.pipe(process.stdout, {end: !argv.k});
             stream.on('end', function() {
+              current.end();
               acceptCh.ack(accepted);
-              if (!argv.k) ch.close();
+              if (!argv.k) {
+                ch.close();
+              }
             });
           });
         });
@@ -108,8 +111,6 @@ ok.then(function(connection) {
             debug('Recv open: stdin is %s', stdinQ);
             var relay = writableQueue(ch, stdinQ);
             process.stdin.pipe(relay, {end: true});
-            process.stdin.on(
-              'end', setImmediate.bind(null, ch.close.bind(ch)));
             break;
           case 'data':
             debug('Recv %d bytes on stdout', msg.content.length);
@@ -117,7 +118,6 @@ ok.then(function(connection) {
             break;
           case 'eof':
             debug('Recv eof on stdout (%s)', stdoutQ);
-            process.stdout.end(); // %% can I do this?
             ch.close();
             break;
           default:

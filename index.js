@@ -64,7 +64,22 @@ ok.then(function(connection) {
         connection.createChannel().then(function(acceptCh) {
           var accepted = null;
           var current = null;
+
+          function next() {
+            process.stdin.unpipe();
+            acceptCh.ack(accepted);
+          }
+
           acceptCh.prefetch(1);
+          // Any returned messages are a result of the 'open' not
+          // being routed; this is interpreted as the connection
+          // having disappeared (possibly before we even turned up)
+          acceptCh.on('return', function(returned) {
+            debug('Open message returned form %s',
+                  returned.fields.routingKey);
+            next();
+          });
+
           acceptCh.consume(handshakeQ, function(msg) {
             switch (msg.properties.type) {
             case 'open':
@@ -72,11 +87,17 @@ ok.then(function(connection) {
               var stdoutQ = msg.properties.replyTo;
               debug('Recv open: stdout is %s', stdoutQ);
               acceptCh.sendToQueue(stdoutQ, new Buffer(0),
-                                   {type: 'open', replyTo: stdinQ});
+                                   {type: 'open',
+                                    mandatory: true,
+                                    replyTo: stdinQ});
               debug('Sent open to %s: stdin is %s', stdoutQ, stdinQ);
-
-              process.stdin.unpipe();
               current = writableQueue(ch, stdoutQ);
+              current.on('finish', function() {
+                next();
+                if (!argv.k) {
+                  ch.close();
+                }
+              });
               process.stdin.pipe(current, {end: true});
               break;
             default:
@@ -91,10 +112,6 @@ ok.then(function(connection) {
             stream.pipe(process.stdout, {end: !argv.k});
             stream.on('end', function() {
               current.end();
-              acceptCh.ack(accepted);
-              if (!argv.k) {
-                ch.close();
-              }
             });
           });
         });

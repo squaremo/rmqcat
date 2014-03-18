@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 var amqp = require('amqplib');
 var Readable = require('stream').Readable
   || require('readable-stream/readable');

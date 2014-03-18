@@ -14,11 +14,11 @@ var options = require('yargs')
   .options('url', {
     'default': 'amqp://localhost',
     describe:'Connect to the RabbitMQ at <url>'})
-  .options('queue', {
+  .options('service', {
     'default': 'rmqcat',
     describe: 'Use the service at <queue>'})
   .options('help', {
-    describe: 'Print help'})
+    describe: 'Print help and exit'})
 
   .describe('l', 'Listen for connections')
   .describe('k', 'Keep listening after client disconnections')

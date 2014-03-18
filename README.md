@@ -31,14 +31,14 @@ The option `-k` in combination with `-l` will keep the listener
 accepting successive connections. Otherwise it will close once the
 first connection closes.
 
-The options `--url` and `--queue` can be used to address a RabbitMQ
+The options `--url` and `--service` can be used to address a RabbitMQ
 server elsewhere (url) with a particular queue used for opening
-connections (queue). By default a RabbitMQ server on localhost is
+connections (service). By default a RabbitMQ server on localhost is
 assumed, so you will probably want to at least supply `--url` in
-practice. The queue name defaults to `"rmqcat"`.
+practice. The service name defaults to `"rmqcat"`.
 
 The option `-D` will make rmqcat output a bit of debug information to
 stderr.
 
 The option `--help`, if present at all, will make rmqcat output a
-usage message then exit.
+usage message to stderr then exit.

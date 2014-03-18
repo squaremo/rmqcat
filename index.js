@@ -20,6 +20,11 @@ var options = require('yargs')
   .options('help', {
     describe: 'Print help and exit'})
 
+  .options('send', {
+    describe: 'Send directly to <queue>'})
+  .options('recv', {
+    describe: 'Receive directly from <queue>'})
+
   .describe('l', 'Listen for connections')
   .describe('k', 'Keep listening after client disconnections')
   .describe('D', 'Output debug information to stderr')
@@ -56,15 +61,42 @@ ok.then(function(connection) {
 
   return connection.createChannel().then(function(ch) {
 
-    // It's convenient, since it's passed around, to use the channel
-    // closing a a signal to clean up and leave.
+    // It's convenient, since most of the work goes through the
+    // channel, to use its closure as a signal to clean up and leave.
     ch.on('close', function() {
       connection.close().then(function() {
         process.exit(0);
       });
     });
 
-    // Always sure the handshake queue exists, since we don't know who
+    // send and recv don't use a service (handshake) queue, they just
+    // send to or receive from the queue mentioned.
+    if (argv.send || argv.recv) {
+
+      if (argv.send) {
+        var dest = argv.send;
+        ch.assertQueue(dest);
+        var out = writableQueue(ch, dest);
+        process.stdin.pipe(out);
+        out.on('finish', function() {
+          ch.close();
+        });
+      }
+
+      else if (argv.recv) {
+        var source = argv.recv;
+        ch.assertQueue(source);
+        var reader = readableQueue(ch, source);
+        reader.on('end', function() {
+          ch.close();
+        });
+        reader.pipe(process.stdout);
+      }
+
+      return; // no more options matter
+    }
+
+    // Make sure the handshake queue exists, since we don't know who
     // will turn up first
     debug('Asserting handshake queue: %s', handshakeQ);
     ch.assertQueue(handshakeQ);
@@ -173,6 +205,7 @@ ok.then(function(connection) {
   });
 }, console.warn);
 
+// Create a writable stream that sends chunks to a queue.
 function writableQueue(channel, queue) {
   var writable = new Writable();
   writable._write = function(chunk, _enc, cb) {
@@ -187,6 +220,50 @@ function writableQueue(channel, queue) {
     debug('Sent eof to %s', queue);
   });
   return writable;
+}
+
+// Create a readable stream that gets chunks from a stream.
+function readableQueue(channel, queue) {
+  var readable = new Readable();
+  readable._read = function() {};
+
+  // Logically, we want to receive everything up to EOF and no
+  // more. However, in practice there's no way to switch the tap off
+  // at an exact message; instead, we will overrun slightly, so we
+  // need to put those extra messages back in the queue by nacking
+  // them.
+  var running = true;
+
+  var ok = channel.consume(queue, function(msg) {
+    if (!running) {
+      channel.nack(msg);
+      return;
+    }
+
+    switch (msg && msg.properties.type) {
+    case null: // cancelled by server
+      readable.emit('error', new Error('Consume cancelled by server'));
+      break;
+    case 'eof':
+      running = false;
+      // Don't trigger anything (e.g., closing the channel) until
+      // we've cancelled. We may get messages in the meantime, which
+      // is why the nack and early return above.
+      ok.then(function(consumeOk) {
+        channel.cancel(consumeOk.consumerTag);
+        readable.push(null);
+      });
+      break;
+    case 'data':
+      readable.push(msg.content);
+      break;
+    default:
+      console.warn('Unknown message type %s', msg.properties.type);
+    }
+    channel.ack(msg);
+  }, {exclusive: true, noAck: false});
+
+  return readable;
 }
 
 function QueueStreamServer(channel, queue) {

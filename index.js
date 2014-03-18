@@ -124,7 +124,7 @@ ok.then(function(connection) {
                            msg.properties.type,
                            'received on handshake queue');
             }
-          }, {exclusive: true});
+          }, {noAck: false});
 
           var streams = new QueueStreamServer(ch, stdinQ);
           streams.on('connection', function(stream) {

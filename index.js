@@ -49,7 +49,7 @@ var url = argv.url;
 // handshake queue); the server creates the stdout queue and announces
 // it to the client (likewise, sent to the stdout queue).
 
-var handshakeQ = argv.queue;
+var handshakeQ = argv.service;
 
 var ok = amqp.connect(url);
 ok.then(function(connection) {

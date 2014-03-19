@@ -68,6 +68,7 @@ rmqcat --send bobbins < bobbins.iso
 
 # Save the file in a queue and output the SHA1 sum
 rmqcat --recv bobbins | tee bobbins.iso | shasum
+```
 
 The string following either `--send` or `--recv` names a queue that
 will hold the data in transit. More than one file of data can be

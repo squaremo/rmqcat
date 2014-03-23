@@ -6,6 +6,7 @@ var Writable = require('stream').Writable
   || require('readable-stream/writable');
 var EventEmitter = require('events').EventEmitter;
 var inherits = require('util').inherits;
+var spawn = require('child_process').spawn;
 
 var options = require('yargs')
   .example('$0 < foobar.txt', 'Send a file')
@@ -24,6 +25,11 @@ var options = require('yargs')
     describe: 'Send directly to <queue>'})
   .options('recv', {
     describe: 'Receive directly from <queue>'})
+
+  .options('exec', {
+    describe: 'Spawn a process and use stdin and stdout from that process',
+    alias: 'e'
+  })
 
   .describe('l', 'Listen for connections')
   .describe('k', 'Keep listening after client disconnections')
@@ -101,6 +107,23 @@ ok.then(function(connection) {
     debug('Asserting handshake queue: %s', handshakeQ);
     ch.assertQueue(handshakeQ);
 
+    var stdin;
+    var stdout;
+
+    function setup() {
+      if (argv.e) {
+        debug('Starting process %s', argv.e);
+        var args = argv.e.split(' ');
+        var child = spawn(args[0], args.slice(1));
+        stdin = child.stdout;
+        stdout = child.stdin;
+      }
+      else {
+        stdin = process.stdin;
+        stdout = process.stdout;
+      }
+    }
+
     if (argv.l) { // act as server
       ch.assertQueue('', {exclusive: true}).then(function(ok) {
         var stdinQ = ok.queue;
@@ -116,7 +139,7 @@ ok.then(function(connection) {
           var current = null;
 
           function next() {
-            process.stdin.unpipe();
+            stdin.unpipe();
             acceptCh.ack(accepted);
           }
 
@@ -149,7 +172,8 @@ ok.then(function(connection) {
                   ch.close();
                 }
               });
-              process.stdin.pipe(current, {end: true});
+              setup();
+              stdin.pipe(current, {end: true});
               break;
             default:
               console.warn('Something other than open, %s ',
@@ -160,10 +184,10 @@ ok.then(function(connection) {
 
           var streams = new QueueStreamServer(ch, stdinQ);
           streams.on('connection', function(stream) {
-            stream.pipe(process.stdout, {end: !argv.k});
-            stream.on('end', function() {
-              current.end();
-            });
+            stream.pipe(stdout, {end: !argv.k});
+            //stream.on('end', function() {
+            //  current.end();
+            //});
           });
         });
       });
@@ -179,16 +203,17 @@ ok.then(function(connection) {
           case 'open':
             var stdinQ = msg.properties.replyTo;
             debug('Recv open: stdin is %s', stdinQ);
+            setup();
             var relay = writableQueue(ch, stdinQ);
-            process.stdin.pipe(relay, {end: true});
+            stdin.pipe(relay, {end: true});
             break;
           case 'data':
             debug('Recv %d bytes on stdout', msg.content.length);
-            process.stdout.write(msg.content);
+            stdout.write(msg.content);
             break;
           case 'eof':
             debug('Recv eof on stdout (%s)', stdoutQ);
-            ch.close();
+            if (stdout !== process.stdout) stdout.end();
             break;
           default:
             console.warn('Unknown message type %s',
@@ -283,7 +308,8 @@ function QueueStreamServer(channel, queue) {
     case null: // consume has been cancelled
       debug('Consume cancelled (%s)', queue);
       setImmediate(function() {
-        self.emit('error', new Error('Input queue deleted'))}); // fall-through
+        self.emit('error', new Error('Input queue deleted'))});
+      // fall-through
     case 'eof':
       debug('Recv eof on %s', queue);
       current.push(null);
@@ -291,7 +317,8 @@ function QueueStreamServer(channel, queue) {
       break;
     case 'data':
       debug('Recv %d bytes on %s', msg.content.length, queue);
-      current.push(msg.content); break;
+      current.push(msg.content);
+      break;
     default:
       console.warn('Unknown message type %s', msg.properties.type);
     }

@@ -49,18 +49,50 @@ var url = argv.url;
 
 // I use three different (kinds of) queues: there is the handshake
 // queue, which is the common knowledge between the client and the
-// server (the "connection point", like a port); then is a stdin queue
-// and a stdout queue, both named from the point of view of the
-// server.
+// server (the "connection point", like a port); then there is an in
+// queue and an out queue, both named from the point of view of the
+// process.
 
-// The stdin queue is that over which the client sends data to the
-// server, and the stdout queue is that over which the server sends
-// data to the client. The client creates the stdin queue and annouces
-// it to the server (as the 'replyTo' of an empty message sent to the
-// handshake queue); the server creates the stdout queue and announces
-// it to the client (likewise, sent to the stdout queue).
+// The stdin queue is that over which the remote sends data to the
+// this process, and the out queue is that over which the process
+// sends data to the remote. This process creates the in queue and
+// annouces it to the remote (as the 'replyTo' of an empty message);
+// the remote creates the out queue and announces it to this process.
+
+// The difference between a client and a server (listener) is that the
+// client sends an open message to the handshake queue, and the
+// listener responds with an open message to the client's in queue
+// (which becomes the server's out queue).
 
 var handshakeQ = argv.service;
+
+
+function closeLatch(done) {
+  function either(which) {
+    switch (which) {
+    case 'in':
+      return only('out');
+    case 'out':
+      return only('in');
+    default:
+      throw new Error('Unknown stream ' + which);
+    }
+  }
+  function only(s) {
+    return function(which) {
+      switch (which) {
+      case s:
+        done();
+        return neither;
+      default:
+        throw new Error('Close on stream other than expected ' + s);
+      }
+    }
+  }
+  function neither() { throw new Error('Both closed'); }
+  return either;
+}
+
 
 var ok = amqp.connect(url);
 ok.then(function(connection) {
@@ -125,9 +157,9 @@ ok.then(function(connection) {
     }
 
     if (argv.l) { // act as server
-      ch.assertQueue('', {exclusive: true}).then(function(ok) {
-        var stdinQ = ok.queue;
-        debug('Created stdin queue: %s', stdinQ);
+      return ch.assertQueue('', {exclusive: true}).then(function(ok) {
+        var inQ = ok.queue;
+        debug('Created in queue: %s', inQ);
 
         // I need a channel on which to accept connections. Why
         // another? Because this one only deals with one connection at
@@ -141,6 +173,23 @@ ok.then(function(connection) {
           function next() {
             stdin.unpipe();
             acceptCh.ack(accepted);
+          }
+
+          var latch;
+          if (argv.k) {
+            function freshLatch() {
+              return closeLatch(function() {
+                latch = freshLatch();
+                next();
+              });
+            }
+            latch = freshLatch();
+          }
+          else {
+            latch = closeLatch(function() {
+              next();
+              ch.close();
+            });
           }
 
           acceptCh.prefetch(1);
@@ -158,19 +207,16 @@ ok.then(function(connection) {
             switch (msg.properties.type) {
             case 'open':
               accepted = msg;
-              var stdoutQ = msg.properties.replyTo;
-              debug('Recv open: stdout is %s', stdoutQ);
-              acceptCh.sendToQueue(stdoutQ, new Buffer(0),
+              var outQ = msg.properties.replyTo;
+              debug('Recv open: out queue is %s', outQ);
+              acceptCh.sendToQueue(outQ, new Buffer(0),
                                    {type: 'open',
                                     mandatory: true,
-                                    replyTo: stdinQ});
-              debug('Sent open to %s: stdin is %s', stdoutQ, stdinQ);
-              current = writableQueue(ch, stdoutQ);
+                                    replyTo: inQ});
+              debug('Sent open to out queue %s: in queue is %s', outQ, inQ);
+              current = writableQueue(ch, outQ);
               current.on('finish', function() {
-                next();
-                if (!argv.k) {
-                  ch.close();
-                }
+                latch = latch('out');
               });
               setup();
               stdin.pipe(current, {end: true});
@@ -182,48 +228,51 @@ ok.then(function(connection) {
             }
           }, {noAck: false});
 
-          var streams = new QueueStreamServer(ch, stdinQ);
+          var streams = new QueueStreamServer(ch, inQ);
           streams.on('connection', function(stream) {
             stream.pipe(stdout, {end: !argv.k});
-            //stream.on('end', function() {
-            //  current.end();
-            //});
+            stream.on('end', function() {
+              latch = latch('in');
+            });
           });
         });
       });
     }
 
     else { // act as client
+      var latch = closeLatch(function() {
+        ch.close();
+      });
+
       ch.assertQueue('', {exclusive: true}).then(function(ok) {
-        var stdoutQ = ok.queue;
-        debug('Created stdout queue %s', stdoutQ);
+        var outQ = ok.queue;
+        debug('Created out queue %s', outQ);
 
-        ch.consume(stdoutQ, function(msg) {
-          switch (msg.properties.type) {
-          case 'open':
-            var stdinQ = msg.properties.replyTo;
-            debug('Recv open: stdin is %s', stdinQ);
-            setup();
-            var relay = writableQueue(ch, stdinQ);
-            stdin.pipe(relay, {end: true});
-            break;
-          case 'data':
-            debug('Recv %d bytes on stdout', msg.content.length);
-            stdout.write(msg.content);
-            break;
-          case 'eof':
-            debug('Recv eof on stdout (%s)', stdoutQ);
-            if (stdout !== process.stdout) stdout.end();
-            break;
-          default:
-            console.warn('Unknown message type %s',
-                         msg.properties.type,
-                         ' received on stdout queue');
+        setup();
+
+        var readable = readableQueue(ch, outQ, function(inQ) {
+          var writable = writableQueue(ch, inQ);
+          stdin.pipe(writable, {end: true});
+          writable.on('finish', function() {
+            latch = latch('out');
+          });
+
+          // The special case for closing client streams: if we're
+          // accepting input on stdin, treat the server closing as us
+          // closing.
+          if (stdin === process.stdin) {
+            readable.on('end', function() {
+              writable.end();
+            });
           }
-        }, {noAck: true, exclusive: true});
+        });
+        readable.on('end', function() {
+          latch = latch('in');
+        });
 
+        readable.pipe(stdout);
         ch.sendToQueue(handshakeQ, new Buffer(0),
-                       {type: 'open', replyTo: stdoutQ});
+                       {type: 'open', replyTo: outQ});
         debug('Sent open to handshake queue %s', handshakeQ);
       });
     }
@@ -248,7 +297,7 @@ function writableQueue(channel, queue) {
 }
 
 // Create a readable stream that gets chunks from a stream.
-function readableQueue(channel, queue) {
+function readableQueue(channel, queue, openCb) {
   var readable = new Readable();
   readable._read = function() {};
 
@@ -280,7 +329,13 @@ function readableQueue(channel, queue) {
       });
       break;
     case 'data':
+      debug('Recv %d bytes', msg.content.length);
       readable.push(msg.content);
+      break;
+    case 'open':
+      var inQ = msg.properties.replyTo;
+      debug('Recv open: in queue is %s', inQ);
+      openCb(inQ);
       break;
     default:
       console.warn('Unknown message type %s', msg.properties.type);
@@ -308,10 +363,10 @@ function QueueStreamServer(channel, queue) {
     case null: // consume has been cancelled
       debug('Consume cancelled (%s)', queue);
       setImmediate(function() {
-        self.emit('error', new Error('Input queue deleted'))});
+        self.emit('error', new Error('In queue deleted'))});
       // fall-through
     case 'eof':
-      debug('Recv eof on %s', queue);
+      debug('Recv eof on in queue %s', queue);
       current.push(null);
       current = null;
       break;

@@ -168,7 +168,7 @@ ok.then(function(connection) {
         // all connection requests at once.
         connection.createChannel().then(function(acceptCh) {
           var accepted = null;
-          var current = null;
+          var writable = null;
 
           function next() {
             stdin.unpipe();
@@ -214,12 +214,12 @@ ok.then(function(connection) {
                                     mandatory: true,
                                     replyTo: inQ});
               debug('Sent open to out queue %s: in queue is %s', outQ, inQ);
-              current = writableQueue(ch, outQ);
-              current.on('finish', function() {
+              writable = writableQueue(ch, outQ);
+              writable.on('finish', function() {
                 latch = latch('out');
               });
               setup();
-              stdin.pipe(current, {end: true});
+              stdin.pipe(writable, {end: true});
               break;
             default:
               console.warn('Something other than open, %s ',
@@ -229,11 +229,20 @@ ok.then(function(connection) {
           }, {noAck: false});
 
           var streams = new QueueStreamServer(ch, inQ);
-          streams.on('connection', function(stream) {
-            stream.pipe(stdout, {end: !argv.k});
-            stream.on('end', function() {
+          streams.on('connection', function(readable) {
+            readable.pipe(stdout, {end: !argv.k});
+            readable.on('end', function() {
               latch = latch('in');
             });
+
+            // The special case for closing client streams: if we're
+            // accepting input on stdin, treat the server closing as us
+            // closing.
+            if (stdin === process.stdin) {
+              readable.on('end', function() {
+                writable.end();
+              });
+            }
           });
         });
       });

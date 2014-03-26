@@ -56,6 +56,18 @@ The option `-k` in combination with `-l` will keep the listener
 accepting successive connections. Otherwise it will exit once the
 first connection closes.
 
+The option `-e` or `--exec` causes rmqcat to spawn a child process
+using the argument following and redirect stdin and stdout of that
+process to the queue. For example,
+
+```js
+rmqcat -l --exec "grep -n foo"
+```
+
+If the option `-k` is used in combination with `-e`, the child process
+will be run for each connection made. In a client, the process is run
+once the connection is accepted.
+
 The option `--service` has a role similar to a TCP port number. It
 names a queue to be used by clients and listeners to establish
 connections. The default is arbitrarily `"rmqcat"`.

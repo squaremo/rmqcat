@@ -68,6 +68,7 @@ var handshakeQ = argv.service;
 
 
 function closeLatch(done) {
+
   function either(which) {
     switch (which) {
     case 'in':
@@ -82,15 +83,17 @@ function closeLatch(done) {
     return function(which) {
       switch (which) {
       case s:
-        done();
-        return neither;
+        return done();
       default:
         throw new Error('Close on stream other than expected ' + s);
       }
     }
   }
-  function neither() { throw new Error('Both closed'); }
   return either;
+}
+
+function neither(which) {
+  throw new Error('Attempted to close ' + which + '; both already closed');
 }
 
 
@@ -148,6 +151,9 @@ ok.then(function(connection) {
         var args = argv.e.split(' ');
         var child = spawn(args[0], args.slice(1));
         stdin = child.stdout;
+        stdin.on('end', function() {
+          debug('Child process output ended');
+        });
         stdout = child.stdin;
       }
       else {
@@ -177,18 +183,17 @@ ok.then(function(connection) {
 
           var latch;
           if (argv.k) {
-            function freshLatch() {
-              return closeLatch(function() {
-                latch = freshLatch();
-                next();
-              });
-            }
-            latch = freshLatch();
+            var freshLatch = closeLatch(function() {
+              next();
+              return freshLatch;
+            });
+            latch = freshLatch;
           }
           else {
             latch = closeLatch(function() {
               next();
               ch.close();
+              return neither;
             });
           }
 
@@ -230,7 +235,11 @@ ok.then(function(connection) {
 
           var streams = new QueueStreamServer(ch, inQ);
           streams.on('connection', function(readable) {
-            readable.pipe(stdout, {end: !argv.k});
+            // process.stdout doesn't like to have `#end` called on
+            // it'; however, pipe appears to know not to do so, and I
+            // *do* want it called if stdout is the input to an
+            // `--exec`.
+            readable.pipe(stdout, {end: true});
             readable.on('end', function() {
               latch = latch('in');
             });
@@ -251,15 +260,16 @@ ok.then(function(connection) {
     else { // act as client
       var latch = closeLatch(function() {
         ch.close();
+        return neither;
       });
 
       ch.assertQueue('', {exclusive: true}).then(function(ok) {
         var outQ = ok.queue;
         debug('Created out queue %s', outQ);
 
-        setup();
-
         var readable = readableQueue(ch, outQ, function(inQ) {
+          setup();
+          readable.pipe(stdout);
           var writable = writableQueue(ch, inQ);
           stdin.pipe(writable, {end: true});
           writable.on('finish', function() {
@@ -279,7 +289,6 @@ ok.then(function(connection) {
           latch = latch('in');
         });
 
-        readable.pipe(stdout);
         ch.sendToQueue(handshakeQ, new Buffer(0),
                        {type: 'open', replyTo: outQ});
         debug('Sent open to handshake queue %s', handshakeQ);

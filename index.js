@@ -102,6 +102,8 @@ ok.then(function(connection) {
 
   return connection.createChannel().then(function(ch) {
 
+    // Simplex
+
     // It's convenient, since most of the work goes through the
     // channel, to use its closure as a signal to clean up and leave.
     ch.on('close', function() {
@@ -119,6 +121,12 @@ ok.then(function(connection) {
         ch.assertQueue(dest);
         var out = writableQueue(ch, dest);
         process.stdin.pipe(out);
+
+        process.on('SIGINT', function() {
+          process.stdin.unpipe();
+          out.end();
+        });
+
         out.on('finish', function() {
           ch.close();
         });
@@ -128,6 +136,30 @@ ok.then(function(connection) {
         var source = argv.recv;
         ch.assertQueue(source);
         var reader = readableQueue(ch, source);
+
+        var torndown = false;
+
+        function teardown() {
+          if (torndown) return;
+          torndown = true;
+          debug("Tearing down pipe to stdout");
+          reader.stop();
+          reader.unpipe();
+          ch.close();
+        }
+
+        process.on('SIGINT', teardown);
+        // If we're being piped into another process, and that process
+        // terminates or otherwise closes its input, we can get an
+        // EPIPE exception here, possibly more than once.
+        process.stdout.on('error', function(err) {
+          if (err.code === 'EPIPE') {
+            debug(err);
+            teardown(); }
+          else
+            throw err;
+        });
+
         reader.on('end', function() {
           ch.close();
         });
@@ -136,6 +168,8 @@ ok.then(function(connection) {
 
       return; // no more options matter
     }
+
+    // Duplex
 
     // Make sure the handshake queue exists, since we don't know who
     // will turn up first
@@ -326,6 +360,19 @@ function readableQueue(channel, queue, openCb) {
   // them.
   var running = true;
 
+  // Don't trigger anything (e.g., closing the channel) until
+  // we've cancelled. We may get messages in the meantime, which
+  // is why the nack and early return above.
+  function stop() {
+    running = false;
+    ok.then(function(consumeOk) {
+      channel.cancel(consumeOk.consumerTag);
+      readable.push(null);
+    });
+  }
+
+  readable.stop = stop;
+
   var ok = channel.consume(queue, function(msg) {
     if (!running) {
       channel.nack(msg);
@@ -337,14 +384,7 @@ function readableQueue(channel, queue, openCb) {
       readable.emit('error', new Error('Consume cancelled by server'));
       break;
     case 'eof':
-      running = false;
-      // Don't trigger anything (e.g., closing the channel) until
-      // we've cancelled. We may get messages in the meantime, which
-      // is why the nack and early return above.
-      ok.then(function(consumeOk) {
-        channel.cancel(consumeOk.consumerTag);
-        readable.push(null);
-      });
+      stop();
       break;
     case 'data':
       debug('Recv %d bytes', msg.content.length);

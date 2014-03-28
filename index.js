@@ -179,11 +179,13 @@ ok.then(function(connection) {
     var stdin;
     var stdout;
 
+    var child;
+
     function setup() {
       if (argv.e) {
         debug('Starting process %s', argv.e);
         var args = argv.e.split(' ');
-        var child = spawn(args[0], args.slice(1));
+        child = spawn(args[0], args.slice(1));
         stdin = child.stdout;
         stdin.on('end', function() {
           debug('Child process output ended');
@@ -209,6 +211,13 @@ ok.then(function(connection) {
         connection.createChannel().then(function(acceptCh) {
           var accepted = null;
           var writable = null;
+
+          process.on('SIGINT', function() {
+            if (writable !== null) {
+              writable.end();
+            }
+            ch.close();
+          });
 
           function next() {
             stdin.unpipe();
@@ -239,6 +248,10 @@ ok.then(function(connection) {
             debug('open message returned from %s',
                   returned.fields.routingKey,
                   ' assuming dead connection');
+            if (child != null) {
+              debug('Killing child process');
+              child.kill();
+            }
             next();
           });
 
@@ -308,6 +321,12 @@ ok.then(function(connection) {
           stdin.pipe(writable, {end: true});
           writable.on('finish', function() {
             latch = latch('out');
+          });
+
+          process.on('SIGINT', function() {
+            if (writable !== null) {
+              writable.end();
+            }
           });
 
           // The special case for closing client streams: if we're

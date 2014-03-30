@@ -1,6 +1,6 @@
 {
   "name": "rmqcat",
-  "version": "0.0.3",
+  "version": "0.0.3-head",
   "description": "netcat-like tool for sending data through RabbitMQ",
   "keywords": [
     "RabbitMQ", "AMQP", "AMQP 0-9-1", "netcat"

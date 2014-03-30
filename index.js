@@ -11,22 +11,31 @@ var spawn = require('child_process').spawn;
 var options = require('yargs')
   .example('$0 < foobar.txt', 'Send a file')
   .example('$0 -lk', 'Listen for connections and output data to stdout')
+  .example('$0 -lk -e wc',
+           'Listen for connections and execute wc on the data from each')
 
   .options('url', {
     'default': 'amqp://localhost',
     describe:'Connect to the RabbitMQ at <url>'})
   .options('service', {
     'default': 'rmqcat',
-    describe: 'Use the service at <queue>'})
+    string: true,
+    describe: 'Use the service at the queue name following'})
   .options('help', {
-    describe: 'Print help and exit'})
+    describe: 'Print help and exit',
+    alias: 'h'})
+  .options('version', {
+    describe: 'Print out the version and exit'})
 
   .options('send', {
-    describe: 'Send directly to <queue>'})
+    string: true,
+    describe: 'Send directly to the queue name following'})
   .options('recv', {
-    describe: 'Receive directly from <queue>'})
+    string: true,
+    describe: 'Receive directly from the queue name following'})
 
   .options('exec', {
+    string: true,
     describe: 'Spawn a process and use stdin and stdout from that process',
     alias: 'e'
   })
@@ -39,8 +48,18 @@ var options = require('yargs')
 var argv = options.argv;
 
 if (argv.help) {
+  printVersion();
   options.showHelp();
   process.exit(0);
+}
+if (argv.version) {
+  printVersion();
+  process.exit(0);
+}
+
+function printVersion() {
+  var package = require('./package');
+  console.warn('%s version %s', package.name, package.version);
 }
 
 var debug = (argv.D) ? console.warn : function() {};

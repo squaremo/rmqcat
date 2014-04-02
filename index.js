@@ -8,6 +8,15 @@ var EventEmitter = require('events').EventEmitter;
 var inherits = require('util').inherits;
 var spawn = require('child_process').spawn;
 
+var argv = process.argv;
+var execIndex = Math.max(argv.indexOf('-e'),
+                         argv.indexOf('--exec'));
+var execArgs = false;
+if (execIndex > -1) {
+  execArgs = argv.slice(execIndex + 1);
+  argv = argv.slice(0, execIndex);
+}
+
 var options = require('yargs')
   .example('$0 < foobar.txt', 'Send a file')
   .example('$0 -lk', 'Listen for connections and output data to stdout')
@@ -36,23 +45,22 @@ var options = require('yargs')
 
   .options('exec', {
     string: true,
-    describe: 'Spawn a process and use stdin and stdout from that process',
+    describe: 'Spawn a process using the remainder of the arguments, and use stdin and stdout from that process',
     alias: 'e'
   })
 
   .describe('l', 'Listen for connections')
   .describe('k', 'Keep listening after client disconnections')
   .describe('D', 'Output debug information to stderr')
-  .boolean(['l', 'k', 'D']);
+  .boolean(['l', 'k', 'D'])
+  .parse(argv);
 
-var argv = options.argv;
-
-if (argv.help) {
+if (options.help) {
   printVersion();
   options.showHelp();
   process.exit(0);
 }
-if (argv.version) {
+if (options.version) {
   printVersion();
   process.exit(0);
 }
@@ -62,9 +70,9 @@ function printVersion() {
   console.warn('%s version %s', package.name, package.version);
 }
 
-var debug = (argv.D) ? console.warn : function() {};
+var debug = (options.D) ? console.warn : function() {};
 
-var url = argv.url;
+var url = options.url;
 
 // I use three different (kinds of) queues: there is the handshake
 // queue, which is the common knowledge between the client and the
@@ -83,7 +91,7 @@ var url = argv.url;
 // listener responds with an open message to the client's in queue
 // (which becomes the server's out queue).
 
-var handshakeQ = argv.service;
+var handshakeQ = options.service;
 
 
 function closeLatch(done) {
@@ -133,10 +141,10 @@ ok.then(function(connection) {
 
     // send and recv don't use a service (handshake) queue, they just
     // send to or receive from the queue mentioned.
-    if (argv.send || argv.recv) {
+    if (options.send || options.recv) {
 
-      if (argv.send) {
-        var dest = argv.send;
+      if (options.send) {
+        var dest = options.send;
         ch.assertQueue(dest);
         var out = writableQueue(ch, dest);
         process.stdin.pipe(out);
@@ -151,8 +159,8 @@ ok.then(function(connection) {
         });
       }
 
-      else if (argv.recv) {
-        var source = argv.recv;
+      else if (options.recv) {
+        var source = options.recv;
         ch.assertQueue(source);
         var reader = readableQueue(ch, source);
 
@@ -201,10 +209,9 @@ ok.then(function(connection) {
     var child;
 
     function setup() {
-      if (argv.e) {
-        debug('Starting process %s', argv.e);
-        var args = argv.e.split(' ');
-        child = spawn(args[0], args.slice(1));
+      if (execArgs) {
+        debug('Starting process %s', execArgs);
+        child = spawn(execArgs[0], execArgs.slice(1));
         stdin = child.stdout;
         stdin.on('end', function() {
           debug('Child process output ended');
@@ -217,7 +224,7 @@ ok.then(function(connection) {
       }
     }
 
-    if (argv.l) { // act as server
+    if (options.l) { // act as server
       return ch.assertQueue('', {exclusive: true}).then(function(ok) {
         var inQ = ok.queue;
         debug('Created in queue: %s', inQ);
@@ -244,7 +251,7 @@ ok.then(function(connection) {
           }
 
           var latch;
-          if (argv.k) {
+          if (options.k) {
             var freshLatch = closeLatch(function() {
               next();
               return freshLatch;

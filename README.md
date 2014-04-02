@@ -57,11 +57,11 @@ accepting successive connections. Otherwise it will exit once the
 first connection closes.
 
 The option `-e` or `--exec` causes rmqcat to spawn a child process
-using the argument following and redirect stdin and stdout of that
-process to the queue. For example,
+using the remainder of the arguments, and redirect stdin and stdout of
+that process tthrough the queue. For example,
 
 ```js
-rmqcat -l --exec "grep -n foo"
+rmqcat -l --exec grep -n foo
 ```
 
 If the option `-k` is used in combination with `-e`, the child process
